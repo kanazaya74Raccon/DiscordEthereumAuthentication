@@ -1,0 +1,90 @@
+service: scaffold-eth-api
+useDotenv: true
+
+# Create an optimized package for our functions 
+package:
+  individually: false
+
+plugins:
+  - serverless-bundle # Package our functions with Webpack
+  - serverless-domain-manager
+
+provider:
+  name: aws
+  runtime: nodejs14.x
+  region: ${opt:region, 'us-east-2'}
+  stage: dev
+  logs:
+    httpApi: true
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:GetItem
+        - dynamodb:BatchGetItem
+        - dynamodb:UpdateItem
+        - dynamodb:PutItem
+        - dynamodb:DeleteItem
+        - dynamodb:Query
+      Resource:
+        - !ImportValue '${self:custom.sstApp}-TableArn'
+        - Fn::Join:
+          - ''
+          - - !ImportValue '${self:custom.sstApp}-TableArn'
+            - '/index/*'
+    - Effect: Allow
+      Action:
+        - lambda:InvokeFunction
+      Resource:
+        - !ImportValue 'DiscordRoleAssignFnArn'
+  httpApi:
+    cors:
+      allowedOrigins:
+        - http://localhost:3000
+      allowedHeaders:
+        - Content-Type
+        - Authorization
+        - cache-control
+        - pragma
+      allowedMethods:
+        - GET
+        - POST
+        - OPTIONS
+      maxAge: 3000
+      allowCredentials: true
+  environment:
+    DYNAMODB_TABLE: !ImportValue '${self:custom.sstApp}-TableName'
+
+custom:
+  # Our stage is based on what is passed in when running serverless
+  # commands. Or falls back to what we have set in the provider section.
+  stage: ${opt:stage, self:provider.stage}
+  # Name of the SST app that's deploying our infrastructure
+  sstApp: ${self:custom.stage}-scaffold-eth-infra
+  customDomain:
+    domainName: ${self:custom.stage}.api.vorder.io
+    basePath: app
+    endpointType: regional
+    apiType: http
+    createRoute53Record: true
+
+functions:
+  defaultCORS:
+    handler: src/functions/handler.defaultCORS
+    events:
+      - httpApi:
+          path: /{proxy+}
+          method: options
+  nonce:
+    handler: src/functions/handler.nonce
+    events:
+      - httpApi:
+          path: /v1/sessions
+          method: get
+  login:
+    handler: src/functions/handler.login
+    environment:
+      JWT_SECRET: '{{resolve:secretsmanager:/dev/serverless_discord_bot/discord:SecretString:jwt_secret}}'
+    events:
+      - httpApi:
+          path: /v1/sessions
+          method: post
